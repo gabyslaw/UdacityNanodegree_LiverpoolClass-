@@ -59,5 +59,15 @@ def updatecar(id):
         conn.close()
         return redirect('/')
 
+@garage.route('/deletecar/<int:id>')
+def deletecar(id):
+    conn = connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM LiverPoolCars WHERE id = %s", (str(id)))
+    conn.commit()
+    conn.close()
+    return redirect('/')
+    
+
 if __name__ == '__main__':
     garage.run(debug=True)
