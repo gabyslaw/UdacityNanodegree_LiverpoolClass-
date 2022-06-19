@@ -1,17 +1,22 @@
 from unicodedata import name
 from flask import Flask, redirect, render_template, request, jsonify, abort
+import os
+from flask_migrate import Migrate
 import psycopg2
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from sqlalchemy.exc import IntegrityError
 
 garage = Flask(__name__)
 
 CORS(garage)
 
-garage.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://postgres:password@localhost/vehicles'
+database_user = os.getenv("DATABASE_USER")
+database_password = os.getenv("DATABASE_PASS")
+garage.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql+psycopg2://{database_user}:{database_password}@localhost/vehicles'
 garage.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(garage)
-
+migrate = Migrate(garage, db)
 
 class Car(db.Model):
     __tablename__ = "fleet"
@@ -21,9 +26,21 @@ class Car(db.Model):
     car_price = db.Column(db.Float(), nullable = False)
     car_type = db.Column(db.String(100), nullable = False)
     car_description = db.Column(db.String(250), nullable = False)
+    number_plate = db.Column(db.String(80), unique=True, nullable = False)
 
     def __repr__(self):
         return "<Car %r>" % self.car_name
+
+    def format(self):
+        return {
+            "id":self.id,
+            "car_name":self.car_name,
+            "car_year":self.car_year,
+            "car_type":self.car_type,
+            "car_price":self.car_price,
+            "car_description":self.car_description,
+            "car_number_plate":self.number_plate
+        }
 
 db.create_all()
 
@@ -41,12 +58,19 @@ def addcar():
     car_year = car_data['car_year']
     car_price = car_data['car_price']
     car_description = car_data['car_description']
+    car_number_plate = car_data['car_number_plate']
 
-    car = Car(car_name = car_name, car_type=car_type, car_year=car_year, car_price=car_price, car_description=car_description)
-    db.session.add(car)
-    db.session.commit()
+    try:
+        car = Car(car_name = car_name, car_type=car_type, car_year=car_year,
+                  car_price=car_price, car_description=car_description,
+                  number_plate=car_number_plate)
+        db.session.add(car)
+        db.session.commit()
+    except IntegrityError as e:
+        db.session.rollback()
+        abort(409, "number plate already exists")
 
-    #TODO: add a new column to the database (number_plate), make it unique and make sure the data doesn't get saved if the same \
+    #Done:TODO: add a new column to the database (number_plate), make it unique and make sure the data doesn't get saved if the same \
     # number_plate is supplied, return error message "oops!, number plate already exists"
 
     return jsonify({
@@ -79,6 +103,22 @@ def getcars():
         "total_cars": len(cars)
     })
 
+@garage.route('/cars/<int:id>', methods=["GET"])
+def getcarbyid(id):
+    gotten_car = Car.query.get(id)
+    
+    
+    if gotten_car is None:
+        abort(404)
+    else:
+        car = gotten_car.format()
+        return jsonify({
+            "car": car
+        })
+
+
+
+
 @garage.route('/updatecar/<int:car_id>', methods=['PATCH'])
 def updatecar(car_id):
     car = Car.query.get(car_id)
@@ -102,7 +142,38 @@ def updatecar(car_id):
         "response": "Car successfully updated"
     })
 
+@garage.errorhandler(409)
+def conflict(error):
+    return jsonify({
+        "error": 409,
+        "message":f"!oops {error}"
+    })
+
+@garage.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        "error":404,
+        "message": f"{error}:  Object not found"
+    })
 #TODO: Add the delete endpoint
+
+@garage.route("/cars/<int:id>", methods=["DELETE"])
+def delete_car(id):
+    car = Car.query.get(id)
+
+    if car is None:
+        abort(404, "Car does not exist")
+    else:
+        try:
+            db.session.delete(car)
+            db.session.commit()
+            return jsonify({
+                "sucess":True,
+                "deleted_id":id
+            })
+        except Exception:
+            db.session.rollback()
+            abort(500, "could not delete car")
 
 # def connection():
 #     server = 'localhost' #server name
